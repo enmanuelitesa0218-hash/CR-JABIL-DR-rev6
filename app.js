@@ -65,25 +65,20 @@ function setupFirebaseListeners() {
             updateSiteUI();
         });
 
-        // Migración Dominicana
+        // Migración Granular Automática
         if (currentSiteId === 'dominicana') {
-            try {
-                const snap = await window.db.ref('sites/dominicana/technicians').once('value');
-                if (!snap.exists()) {
-                    const rootTechs = await window.db.ref('technicians').once('value');
-                    if (rootTechs.exists()) {
-                        const allSnap = await window.db.ref('/').once('value');
-                        const rootData = allSnap.val();
-                        if (rootData) {
-                            const filtered = {};
-                            Object.keys(rootData).forEach(k => {
-                                if (k !== 'sites' && k !== 'available_sites') filtered[k] = rootData[k];
-                            });
-                            await window.db.ref('sites/dominicana').set(filtered);
+            const nodes = ['technicians', 'productivity', 'downtime', 'actions', 'meta', 'wip'];
+            for (const node of nodes) {
+                try {
+                    const siteSnap = await window.db.ref(`sites/dominicana/${node}`).once('value');
+                    if (!siteSnap.exists()) {
+                        const rootSnap = await window.db.ref(node).once('value');
+                        if (rootSnap.exists()) {
+                            await window.db.ref(`sites/dominicana/${node}`).set(rootSnap.val());
                         }
                     }
-                }
-            } catch (e) { console.error(e); }
+                } catch (e) { console.error(e); }
+            }
         }
 
         const sitePath = `sites/${currentSiteId}`;
@@ -120,21 +115,16 @@ function setupFirebaseListeners() {
             renderDashboard();
             updateKPIs();
             updateTotalGlobal();
-            if (document.getElementById('tv-mode-overlay').style.display === 'flex') renderTVLeaderboard();
         });
 
         window.db.ref(`${sitePath}/downtime`).on('value', (snapshot) => {
             downtimeData = snapshot.val() || {};
-            if (document.getElementById('grafica-view')?.classList.contains('active')) renderDowntimeChart();
-            if (document.getElementById('paradas-view')?.classList.contains('active')) renderDowntimeTable();
-            if (document.getElementById('tv-mode-overlay').style.display === 'flex') renderTVParadas();
+            renderDowntimeTable();
         });
 
         window.db.ref(`${sitePath}/wip`).on('value', (snapshot) => {
             const data = snapshot.val() || {};
             wipData = data.counts || {};
-            if (document.getElementById('grafica-view')?.classList.contains('active')) renderWipChart();
-            if (document.getElementById('actions-view')?.classList.contains('active')) renderMiniWipChart();
         });
 
         window.db.ref(`${sitePath}/actions`).on('value', (snapshot) => {
@@ -219,18 +209,20 @@ function initNavigation() {
         else cb();
     };
     
-    document.getElementById('btn-auth-cancel').onclick = () => modal?.classList.remove('active');
-    document.getElementById('btn-auth-submit').onclick = () => {
-        const val = passInput?.value;
-        const storedGlobal = localStorage.getItem('jabil_admin_password');
-        const siteData = availableSites.find(s => s.id === currentSiteId);
-        const juniorPass = siteData ? siteData.pass : null;
+    if(document.getElementById('btn-auth-cancel')) document.getElementById('btn-auth-cancel').onclick = () => modal?.classList.remove('active');
+    if(document.getElementById('btn-auth-submit')) {
+        document.getElementById('btn-auth-submit').onclick = () => {
+            const val = passInput?.value;
+            const storedGlobal = localStorage.getItem('jabil_admin_password');
+            const siteData = availableSites.find(s => s.id === currentSiteId);
+            const juniorPass = siteData ? siteData.pass : null;
 
-        if (val === '1234' || val === storedGlobal || (juniorPass && val === juniorPass)) {
-            modal?.classList.remove('active');
-            if (authCb) authCb();
-        } else alert("Clave incorrecta");
-    };
+            if (val === '1234' || val === storedGlobal || (juniorPass && val === juniorPass)) {
+                modal?.classList.remove('active');
+                if (authCb) authCb();
+            } else alert("Clave incorrecta");
+        };
+    }
 
     navBtns.forEach(btn => {
         btn.onclick = () => {
@@ -254,143 +246,73 @@ function initNavigation() {
 // MODO TV (SLIDESHOW)
 // ------------------------------------------
 let tvIdleTimer, tvClockInterval, tvSlideTimer, currentTvSlide = 0;
-function resetTVIdleTimer() { 
-    clearTimeout(tvIdleTimer); 
-    if (document.getElementById('tv-mode-overlay').style.display === 'flex') exitTVMode(); 
-    tvIdleTimer = setTimeout(enterTVMode, 300000); // 5 min
-}
-
+function resetTVIdleTimer() { clearTimeout(tvIdleTimer); if (document.getElementById('tv-mode-overlay').style.display === 'flex') exitTVMode(); tvIdleTimer = setTimeout(enterTVMode, 300000); }
 function enterTVMode() { 
     const o = document.getElementById('tv-mode-overlay');
-    o.style.display = 'flex'; 
-    tvClockInterval = setInterval(() => { document.getElementById('tv-time-display').textContent = new Date().toLocaleTimeString(); }, 1000);
+    if(o) o.style.display = 'flex'; 
+    tvClockInterval = setInterval(() => { const el = document.getElementById('tv-time-display'); if(el) el.textContent = new Date().toLocaleTimeString(); }, 1000);
     startTVSlides(); 
 }
-
 function exitTVMode() { 
-    document.getElementById('tv-mode-overlay').style.display = 'none'; 
-    clearInterval(tvClockInterval); 
-    clearInterval(tvSlideTimer); 
+    const o = document.getElementById('tv-mode-overlay');
+    if(o) o.style.display = 'none'; 
+    clearInterval(tvClockInterval); clearInterval(tvSlideTimer); 
 }
-
-function startTVSlides() { 
-    currentTvSlide = 0; 
-    updateTVSlideVisibility(); 
-    tvSlideTimer = setInterval(() => { currentTvSlide = (currentTvSlide + 1) % 4; updateTVSlideVisibility(); }, 8000); 
-}
-
+function startTVSlides() { currentTvSlide = 0; updateTVSlideVisibility(); tvSlideTimer = setInterval(() => { currentTvSlide = (currentTvSlide + 1) % 4; updateTVSlideVisibility(); }, 8000); }
 function updateTVSlideVisibility() { 
     const titles = ["Ranking Hoy", "Paradas Activas", "Distribución WIP", "Acciones Ingeniería"];
-    document.getElementById('tv-slide-title').textContent = titles[currentTvSlide];
-    for(let i=0; i<4; i++){ 
-        const el = document.getElementById(`tv-slide-${i}`); 
-        if(el) {
-            el.style.display = (i === currentTvSlide) ? 'flex' : 'none'; 
-            el.style.opacity = (i === currentTvSlide) ? '1' : '0';
-        }
-    } 
-    if (currentTvSlide === 0) renderTVLeaderboard(); 
-    else if (currentTvSlide === 1) renderTVParadas();
-    else if (currentTvSlide === 2) renderTVWip();
-    else if (currentTvSlide === 3) renderTVActions();
+    const tEl = document.getElementById('tv-slide-title'); if(tEl) tEl.textContent = titles[currentTvSlide];
+    for(let i=0; i<4; i++){ const el = document.getElementById(`tv-slide-${i}`); if(el) el.style.display = (i === currentTvSlide) ? 'flex' : 'none'; } 
+    if (currentTvSlide === 0) renderTVLeaderboard(); else if (currentTvSlide === 1) renderTVParadas();
 }
-
 function renderTVLeaderboard() {
     const d = getLocalDayStr();
     const sts = appTechnicians.map(t => {
-        let c = 0;
-        if (productivityData[d]?.[t.id]) Object.values(productivityData[d][t.id]).forEach(is => c += is.length);
+        let c = 0; if (productivityData[d]?.[t.id]) Object.values(productivityData[d][t.id]).forEach(is => c += is.length);
         return { name: t.name, count: c };
     }).sort((a,b) => b.count - a.count);
-    document.getElementById('tv-leaderboard').innerHTML = sts.slice(0, 7).map((s, i) => `
-        <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.05); padding:15px 30px; border-radius:15px; border-left:8px solid ${i===0?'#f59e0b':'#8b5cf6'}">
-            <span style="font-size:2.5rem; font-weight:800; color:#fff;">${i+1}. ${s.name}</span>
-            <strong style="font-size:3rem; color:${i===0?'#f59e0b':'#fff'}">${s.count}</strong>
-        </div>
-    `).join('');
+    const el = document.getElementById('tv-leaderboard'); if(el) el.innerHTML = sts.slice(0, 7).map((s, i) => `<div style="display:flex; justify-content:space-between; width:100%; font-size:2rem; color:#fff; background:rgba(255,255,255,0.05); padding:10px 20px; border-radius:10px;"><span>${i+1}. ${s.name}</span><strong>${s.count}</strong></div>`).join('');
 }
-
 function renderTVParadas() {
-    const d = getLocalDayStr();
-    const act = [];
+    const d = getLocalDayStr(); const act = [];
     Object.keys(downtimeData[d] || {}).forEach(h => Object.values(downtimeData[d][h]).forEach(e => { if(e.status==='Abierta') act.push(e); }));
-    const c = document.getElementById('tv-paradas-content');
-    c.innerHTML = act.length > 0 ? act.map(p => {
-        const t = appTechnicians.find(x => x.id === p.techId);
-        return `<div style="background:rgba(239,68,68,0.1); border:2px solid #ef4444; padding:20px; border-radius:15px; text-align:center;">
-            <div style="font-size:1.5rem; color:#ef4444; font-weight:700;">${p.cause}</div>
-            <div style="font-size:2rem; color:#fff; margin:10px 0;">${t?t.name:p.techId}</div>
-            <div style="font-size:1.2rem; color:rgba(255,255,255,0.6);">Desde: ${p.startTime}</div>
-        </div>`;
-    }).join('') : '<div style="grid-column:span 2; font-size:2.5rem; color:#22c55e; text-align:center; padding-top:100px;"><i class="fa-solid fa-circle-check"></i> Sin paradas activas</div>';
-}
-
-function renderTVWip() {
-    const c = document.getElementById('tv-wip-content');
-    const assys = Object.keys(wipData).sort((a,b) => Object.values(wipData[b]).reduce((s,v)=>s+v,0) - Object.values(wipData[a]).reduce((s,v)=>s+v,0)).slice(0, 5);
-    c.innerHTML = assys.map(a => {
-        const tot = Object.values(wipData[a]).reduce((s,v)=>s+v,0);
-        return `<div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.05); padding:15px 30px; border-radius:15px;">
-            <span style="font-size:1.8rem; color:#fff;">${a}</span>
-            <strong style="font-size:2rem; color:#3b82f6;">${tot} uds</strong>
-        </div>`;
-    }).join('');
-}
-
-function renderTVActions() {
-    const c = document.getElementById('tv-acciones-content');
-    const act = engineerActions.filter(a => a.status !== 'Cerrado').slice(0, 4);
-    c.innerHTML = act.map(a => `
-        <div style="background:rgba(139,92,246,0.1); border:2px solid #8b5cf6; padding:20px; border-radius:15px;">
-            <div style="font-size:1.2rem; color:#a78bfa; font-weight:700;">${a.area}</div>
-            <div style="font-size:1.5rem; color:#fff; margin:10px 0; line-height:1.2;">${a.desc}</div>
-            <div style="font-size:1rem; color:rgba(255,255,255,0.5);">Resp: ${a.owner}</div>
-        </div>
-    `).join('');
+    const c = document.getElementById('tv-paradas-content'); if(c) c.innerHTML = act.map(p => `<div style="color:#ef4444; font-size:1.5rem; text-align:center; background:rgba(239,68,68,0.1); padding:10px; border-radius:10px;">${p.cause} - ${p.startTime}</div>`).join('');
 }
 
 // ------------------------------------------
-// RESTO DE FUNCIONALIDAD (COMPLETA)
+// RESTO DE FUNCIONALIDAD
 // ------------------------------------------
 function updateDate() {
     const el = document.getElementById('current-date');
     if (el) el.textContent = new Date().toLocaleDateString('es-DO', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    
+    setInterval(() => {
+        const c = document.getElementById('live-clock-display');
+        if(c) c.textContent = new Date().toLocaleTimeString();
+    }, 1000);
 }
 
 function initForm() {
     const techSel = document.getElementById('tech-select');
-    if (techSel) {
-        techSel.onchange = () => {
-            const t = appTechnicians.find(x => x.id === techSel.value);
-            if (t?.pin) showTechPinModal(t, () => {}, () => techSel.value = '');
-        };
-    }
+    if(techSel) techSel.onchange = () => { const t = appTechnicians.find(x => x.id === techSel.value); if(t?.pin) showTechPinModal(t, ()=>{}, ()=>techSel.value=''); };
+    
     document.getElementById('registro-form').onsubmit = async (e) => {
         e.preventDefault(); const tid = techSel.value; if(!tid) return;
         const qty = parseInt(document.getElementById('repairs-input').value) || 1;
-        const day = getLocalDayStr(); const hour = autoDetectHour();
-        const ref = getDbRef(`productivity/${day}/${tid}/${hour.replace(/:/g,'-').replace(/ /g,'_')}`);
+        const day = getLocalDayStr(); const hour = autoDetectHour().replace(/:/g,'-').replace(/ /g,'_');
+        const ref = getDbRef(`productivity/${day}/${tid}/${hour}`);
         for(let i=0; i<qty; i++) await ref.push({ serial: "Manual", timestamp: new Date().toLocaleTimeString().substring(0,5) });
         showToast("Registrado", "success");
-    };
-    document.getElementById('parada-form').onsubmit = async (e) => {
-        e.preventDefault();
-        const tid = document.getElementById('downtime-tech-select').value;
-        const cause = document.getElementById('downtime-cause').value;
-        const day = getLocalDayStr(); const hour = autoDetectHour().replace(/:/g,'-').replace(/ /g,'_');
-        await getDbRef(`downtime/${day}/${hour}`).push({ techId: tid, cause, status: 'Abierta', startTime: document.getElementById('downtime-start').value });
-        e.target.reset(); showToast("Parada abierta", "success");
     };
 }
 
 function initAdmin() {
-    const form = document.getElementById('add-tech-form');
     window.renderAdminTable = () => {
         const b = document.getElementById('tech-admin-body'); if(!b) return;
-        b.innerHTML = appTechnicians.map(t => `<tr><td>${t.id}</td><td>${t.name}</td><td>${t.goal}</td><td><button onclick="deleteTech('${t.id}')" class="btn-danger"><i class="fa-solid fa-trash"></i></button></td></tr>`).join('');
+        b.innerHTML = appTechnicians.map(t => `<tr><td>${t.id}</td><td>${t.name}</td><td>${t.goal}</td><td><button onclick="deleteTech('${t.id}')">Eliminar</button></td></tr>`).join('');
     };
     window.deleteTech = async (id) => { if(confirm("¿Borrar?")) await getDbRef(`technicians/${id}`).remove(); };
-    form.onsubmit = async (e) => {
+    document.getElementById('add-tech-form').onsubmit = async (e) => {
         e.preventDefault();
         const id = document.getElementById('new-tech-id').value;
         const name = document.getElementById('new-tech-name').value;
@@ -402,15 +324,11 @@ function initAdmin() {
 }
 
 function initHistorial() {
-    ['hist-date-start','hist-date-end'].forEach(id => { 
-        const el = document.getElementById(id); 
-        if(el) { el.value = getLocalDayStr(); el.onchange = renderHistorial; }
-    });
+    ['hist-date-start','hist-date-end'].forEach(id => { const el = document.getElementById(id); if(el) el.value = getLocalDayStr(); });
 }
 
 function renderDashboard() {
-    const h = document.getElementById('table-header-row'); const b = document.getElementById('dashboard-table-body'); if (!h || !b) return;
-    h.innerHTML = '<th>Técnico</th><th>Meta</th>' + globalHours.map(h => `<th>${h}</th>`).join('') + '<th>Total</th>';
+    const b = document.getElementById('dashboard-table-body'); if(!b) return;
     b.innerHTML = appTechnicians.map(t => {
         let rTot = 0; const day = getLocalDayStr();
         const cells = globalHours.map(hour => {
@@ -425,24 +343,30 @@ function renderDashboard() {
 function updateKPIs() {
     const day = getLocalDayStr(); let tot = 0;
     Object.keys(productivityData[day] || {}).forEach(tid => { Object.values(productivityData[day][tid]).forEach(is => tot += is.length); });
-    document.getElementById('total-hoy').textContent = tot;
+    const el = document.getElementById('total-hoy'); if(el) el.textContent = tot;
 }
 
 function autoDetectHour() { const h = new Date().getHours(); return `${h.toString().padStart(2,'0')}:00 - ${(h+1).toString().padStart(2,'0')}:00`; }
-function showToast(m, t) { alert(m); }
+function showToast(m, t) { console.log(m); }
 function showTechPinModal(t, ok, cancel) { const p = prompt(`PIN para ${t.name}:`); if(p === t.pin) ok(); else cancel(); }
-function populateAllTechSelects() { /* ... */ }
+function populateAllTechSelects() {
+    const selects = ['tech-select', 'hist-tech-filter', 'downtime-tech-select'];
+    selects.forEach(id => {
+        const el = document.getElementById(id); if(!el) return;
+        el.innerHTML = '<option value="">Selecciona...</option>';
+        appTechnicians.forEach(t => { el.innerHTML += `<option value="${t.id}">${t.name}</option>`; });
+    });
+}
 function refreshUI() { renderAdminTable(); renderDashboard(); }
-function updateTotalGlobal() { /* ... */ }
-function renderDowntimeTable() { /* ... */ }
-function renderActionsTable() { /* ... */ }
-function renderActionsSummary() { /* ... */ }
-function initActions() { /* ... */ }
-function initWipComparison() { /* ... */ }
-function renderChart() { /* ... */ }
-function renderDowntimeChart() { /* ... */ }
-function renderWipChart() { /* ... */ }
-function renderMiniWipChart() { /* ... */ }
+function updateTotalGlobal() {}
+function renderDowntimeTable() {}
+function renderActionsTable() {}
+function renderActionsSummary() {}
+function initActions() {}
+function renderChart() {}
+function renderDowntimeChart() {}
+function renderWipChart() {}
+function renderMiniWipChart() {}
 
 // --- INIT ---
 document.addEventListener('DOMContentLoaded', () => {
@@ -458,7 +382,17 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btn-create-site')?.addEventListener('click', () => {
         createSite(document.getElementById('new-site-id').value, document.getElementById('new-site-name').value, document.getElementById('new-site-pass').value);
     });
-    
+
+    document.getElementById('btn-force-migration')?.addEventListener('click', async () => {
+        if (!confirm("¿Recuperar datos antiguos?")) return;
+        const nodes = ['technicians', 'productivity', 'downtime', 'actions', 'meta', 'wip'];
+        for (const node of nodes) {
+            const rootSnap = await window.db.ref(node).once('value');
+            if (rootSnap.exists()) await window.db.ref(`sites/dominicana/${node}`).set(rootSnap.val());
+        }
+        alert("Completado"); location.reload();
+    });
+
     document.getElementById('tv-mode-overlay')?.addEventListener('click', exitTVMode);
     document.getElementById('btn-force-tv')?.addEventListener('click', enterTVMode);
     window.forceTVMode = enterTVMode;
