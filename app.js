@@ -534,23 +534,107 @@ function renderActionsSummary() {
 // GRÁFICAS (Chart.js)
 // ------------------------------------------
 function renderChart() {
-    const c = document.getElementById('productivityChart'); if(!c) return;
-    const ds = appTechnicians.map((t, i) => ({ label: t.name, data: globalHours.map(h => { const safeH = h.replace(/:/g,'-').replace(/ /g,'_'); return (productivityData[getLocalDayStr()]?.[t.id]?.[safeH] || []).length; }), backgroundColor: `hsla(${i*60},70%,50%,0.6)` }));
+    const ctx = document.getElementById('productivityChart'); if(!ctx) return;
+    const day = document.getElementById('filter-date-start')?.value || getLocalDayStr();
+    
+    // Agrupar producción TOTAL por hora (Suma de todos los técnicos)
+    const hourlyTotals = globalHours.map(h => {
+        const safeH = h.replace(/:/g,'-').replace(/ /g,'_');
+        let total = 0;
+        appTechnicians.forEach(t => { total += (productivityData[day]?.[t.id]?.[safeH] || []).length; });
+        return total;
+    });
+
     if(productivityChartInstance) productivityChartInstance.destroy();
-    productivityChartInstance = new Chart(c.getContext('2d'), { type:'bar', data: { labels: globalHours.map(h=>h.split(' ')[0]), datasets: ds }, options: { responsive:true, maintainAspectRatio:false } });
+    productivityChartInstance = new Chart(ctx.getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels: globalHours.map(h => h.split(' ')[0]),
+            datasets: [{
+                label: 'Unidades Totales / Hora',
+                data: hourlyTotals,
+                backgroundColor: 'rgba(139, 92, 246, 0.6)',
+                borderColor: '#8b5cf6',
+                borderWidth: 2,
+                borderRadius: 5
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: true, labels: { color: '#fff' } } },
+            scales: {
+                y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#fff' } },
+                x: { grid: { display: false }, ticks: { color: '#fff' } }
+            }
+        }
+    });
 }
 function renderDowntimeChart() {
-    const c = document.getElementById('downtimeChart'); if(!c) return;
-    const counts = {}; Object.values(downtimeData[getLocalDayStr()] || {}).forEach(h => Object.values(h).forEach(e => counts[e.cause] = (counts[e.cause] || 0) + 1));
+    const ctx = document.getElementById('downtimeChart'); if(!ctx) return;
+    const day = getLocalDayStr();
+    const counts = {};
+    Object.values(downtimeData[day] || {}).forEach(h => {
+        Object.values(h).forEach(e => { counts[e.cause] = (counts[e.cause] || 0) + 1; });
+    });
+
+    const labels = Object.keys(counts);
+    const data = Object.values(counts);
+
     if(downtimeChartInstance) downtimeChartInstance.destroy();
-    downtimeChartInstance = new Chart(c.getContext('2d'), { type:'doughnut', data: { labels: Object.keys(counts), datasets: [{ data: Object.values(counts), backgroundColor: ['#ef4444','#f59e0b','#3b82f6','#10b981'] }] }, options: { responsive:true, maintainAspectRatio:false } });
+    downtimeChartInstance = new Chart(ctx.getContext('2d'), {
+        type: 'doughnut',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: data,
+                backgroundColor: ['#ef4444', '#f59e0b', '#3b82f6', '#10b981', '#8b5cf6'],
+                borderWidth: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '70%',
+            plugins: {
+                legend: { position: 'right', labels: { color: '#fff', font: { size: 10 } } }
+            }
+        }
+    });
 }
 function renderWipChart() {
-    const c = document.getElementById('wipChart'); if(!c) return;
-    const assys = Object.keys(wipData).slice(0, 5);
-    const ds = ["To Diag", "To Repair", "To Test"].map(cat => ({ label: cat, data: assys.map(a => wipData[a][cat] || 0), backgroundColor: cat==='To Diag'?'#3b82f6':cat==='To Repair'?'#f59e0b':'#10b981' }));
+    const ctx = document.getElementById('wipChart'); if(!ctx) return;
+    // Seleccionamos los TOP 8 Assemblies por cantidad total para no saturar
+    const sortedAssemblies = Object.keys(wipData).sort((a,b) => {
+        const totalA = Object.values(wipData[a]).reduce((s,v)=>s+v,0);
+        const totalB = Object.values(wipData[b]).reduce((s,v)=>s+v,0);
+        return totalB - totalA;
+    }).slice(0, 8);
+
+    const categories = ["To Diag", "To Repair", "To Test"];
+    const colors = { "To Diag": "#3b82f6", "To Repair": "#f59e0b", "To Test": "#10b981" };
+
+    const datasets = categories.map(cat => ({
+        label: cat,
+        data: sortedAssemblies.map(assy => wipData[assy][cat] || 0),
+        backgroundColor: colors[cat],
+        stack: 'Stack 0'
+    }));
+
     if(wipChartInstance) wipChartInstance.destroy();
-    wipChartInstance = new Chart(c.getContext('2d'), { type:'bar', data: { labels: assys, datasets: ds }, options: { responsive:true, maintainAspectRatio:false, scales: { y: { stacked: true } } } });
+    wipChartInstance = new Chart(ctx.getContext('2d'), {
+        type: 'bar',
+        data: { labels: sortedAssemblies, datasets: datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { labels: { color: '#fff' } } },
+            scales: {
+                x: { stacked: true, grid: { display: false }, ticks: { color: '#fff', font: { size: 9 } } },
+                y: { stacked: true, beginAtZero: true, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#fff' } }
+            }
+        }
+    });
 }
 function renderMiniWipChart() {
     const c = document.getElementById('miniWipChart'); if(!c) return;
